@@ -45,8 +45,18 @@ const VIEWS = {
 
 let activeView = VIEWS.MAIN;
 let cursor = { main: 0, strategy: 0, asset: 0, size: 0 };
-let pressCount = 0;
 let lastPressTime = 0;
+
+function cleanExit() {
+  // Issue #5 - the terminal was left in raw mode when the app closed which
+  // caused it to hang sometimes. Now we properly restore stdin before exiting.
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(false);
+  }
+  process.stdin.pause();
+  engine.stop();
+  process.exit(0);
+}
 
 readline.emitKeypressEvents(process.stdin);
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -54,17 +64,17 @@ if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.on('keypress', (ch, key) => {
   if (!key) return;
 
-  pressCount++;
-
-  if (pressCount > 3 && pressCount < 7) return;
-
+  
+  // Issues #1 & #4 - turns out the pressCount logic was the culprit all along.
+  // It was silently dropping every 4th, 5th and 6th keypress which made arrow
+  // keys feel broken. Removed it completely - the 150ms debounce below handles
+  // fast typing just fine on its own.
   const now = Date.now();
   if (now - lastPressTime < 150) return;
   lastPressTime = now;
 
   if (key.name === 'q' && !key.ctrl) {
-    engine.stop();
-    process.exit(0);
+    cleanExit();
   }
 
   if (activeView === VIEWS.MAIN) {
@@ -80,8 +90,7 @@ process.stdin.on('keypress', (ch, key) => {
         cursor.strategy = 0;
         drawStrategy();
       } else if (cursor.main === 1) {
-        engine.stop();
-        process.exit(0);
+        cleanExit();
       } else if (cursor.main === 2) {
         console.clear();
         console.log('SETTINGS\n[ESC] back');
@@ -98,8 +107,10 @@ process.stdin.on('keypress', (ch, key) => {
     }
   } else if (activeView === VIEWS.STRATEGY) {
     if (key.name === 'escape') {
+      // Issue #3 - resetting cursor.main to 0 here meant the highlight always
+      // jumped back to the top when you pressed ESC. Removed the reset so it
+      // stays wherever the user left it.
       activeView = VIEWS.MAIN;
-      cursor.main = 0;
       drawMain();
     } else if (key.name === 'up') {
       cursor.strategy = (cursor.strategy - 1 + 4) % 4;
@@ -151,13 +162,13 @@ process.stdin.on('keypress', (ch, key) => {
     }
   } else if (activeView === VIEWS.RUNNING) {
     if (key.name === 'q') {
-      engine.stop();
-      process.exit(0);
+      cleanExit();
     }
   } else if (activeView === VIEWS.SETTINGS || activeView === VIEWS.HELP || activeView === VIEWS.ABOUT) {
-    if (key.name === 'escape') {
+    if (key.name === 'escape' || key.name === 'return') {
+      // Issue #2 - Enter was completely ignored on the settings, help and about
+      // screens. Added it alongside ESC so both keys bring you back to main.
       activeView = VIEWS.MAIN;
-      cursor.main = 0;
       drawMain();
     }
   }
@@ -231,6 +242,5 @@ function drawRunning() {
 drawMain();
 
 process.on('SIGINT', () => {
-  engine.stop();
-  process.exit(0);
+  cleanExit();
 });
